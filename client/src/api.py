@@ -53,3 +53,24 @@ def get_history(server_url):
 
 def get_file_url(server_url, audio_id, kind):
   return f'{server_url}/api/audio/{audio_id}/{kind}'
+
+
+def get_file_content(server_url, audio_id, kind):
+  try:
+    response = requests.get(get_file_url(server_url, audio_id, kind), timeout=TIMEOUT)
+  except requests.RequestException:
+    raise RuntimeError(CONNECTION_ERROR)
+
+  if response.status_code != 200:
+    raise RuntimeError(get_error_message(response))
+  return response.content
+
+
+def download_file(server_url, audio_id, kind, dest_path):
+  content = get_file_content(server_url, audio_id, kind)
+  try:
+    with open(dest_path, 'wb') as file:
+      file.write(content)
+  except OSError:
+    raise RuntimeError('Não foi possível salvar o arquivo nesse local.')
+

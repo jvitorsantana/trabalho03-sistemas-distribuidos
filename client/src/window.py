@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 import api
 import config
+from waveform_dialog import WaveformDialog
 
 PROCESSINGS = {
   'normalize': 'Normalização de volume',
@@ -181,6 +182,14 @@ class MainWindow(QMainWindow):
     self.play_processed_button.clicked.connect(self.play_processed_from_server)
     self.stop_server_button = QPushButton('Parar')
     self.stop_server_button.clicked.connect(self.server_player.stop)
+
+    self.download_original_button = QPushButton('Baixar original')
+    self.download_original_button.clicked.connect(self.download_original)
+    self.download_processed_button = QPushButton('Baixar processado')
+    self.download_processed_button.clicked.connect(self.download_processed)
+    self.waveform_button = QPushButton('Ver forma de onda')
+    self.waveform_button.clicked.connect(self.show_waveform)
+
     self.history_status = QLabel('')
 
     self.history_table = QTableWidget(0, len(HISTORY_COLUMNS))
@@ -193,16 +202,25 @@ class MainWindow(QMainWindow):
     self.history_table.currentCellChanged.connect(self.show_selected_details)
     self.history_table.cellDoubleClicked.connect(self.play_double_clicked)
 
-    buttons_row = QHBoxLayout()
-    buttons_row.addWidget(self.refresh_button)
-    buttons_row.addWidget(self.play_original_button)
-    buttons_row.addWidget(self.play_processed_button)
-    buttons_row.addWidget(self.stop_server_button)
-    buttons_row.addStretch()
+    # Primeira linha: atualizar e tocar
+    play_row = QHBoxLayout()
+    play_row.addWidget(self.refresh_button)
+    play_row.addWidget(self.play_original_button)
+    play_row.addWidget(self.play_processed_button)
+    play_row.addWidget(self.stop_server_button)
+    play_row.addStretch()
+
+    # Segunda linha: baixar e ver a forma de onda
+    files_row = QHBoxLayout()
+    files_row.addWidget(self.download_original_button)
+    files_row.addWidget(self.download_processed_button)
+    files_row.addWidget(self.waveform_button)
+    files_row.addStretch()
 
     box = QGroupBox('Histórico')
     box_layout = QVBoxLayout(box)
-    box_layout.addLayout(buttons_row)
+    box_layout.addLayout(play_row)
+    box_layout.addLayout(files_row)
     box_layout.addWidget(self.history_status)
     box_layout.addWidget(self.history_table)
     return box
@@ -246,8 +264,9 @@ class MainWindow(QMainWindow):
     self.bitrate_combo.setEnabled(processing == 'bitrate')
     self.format_combo.setEnabled(processing == 'convert')
 
-  def start_waiting(self, message):
-    self.result_label.setText(message)
+  def start_waiting(self, label, message):
+    # Mostra a mensagem no texto indicado e troca o cursor pelo de espera
+    label.setText(message)
     QApplication.setOverrideCursor(Qt.WaitCursor)
     QApplication.processEvents()
 
@@ -256,7 +275,7 @@ class MainWindow(QMainWindow):
 
   def send_file(self):
     self.send_button.setEnabled(False)
-    self.start_waiting('Enviando e processando, aguarde...')
+    self.start_waiting(self.result_label, 'Enviando e processando, aguarde...')
 
     try:
       audio = api.upload_audio(
@@ -300,9 +319,7 @@ class MainWindow(QMainWindow):
     self.result_label.setText('\n'.join(lines))
 
   def refresh_history(self):
-    self.history_status.setText('Carregando histórico...')
-    QApplication.setOverrideCursor(Qt.WaitCursor)
-    QApplication.processEvents()
+    self.start_waiting(self.history_status, 'Carregando histórico...')
 
     try:
       audios = api.get_history(self.server_url())
@@ -338,6 +355,14 @@ class MainWindow(QMainWindow):
       return
     self.show_details(self.history_audios[row], 'Áudio selecionado no histórico:')
 
+  def selected_audio(self):
+    # Devolve o áudio da linha selecionada, ou None se nada estiver selecionado
+    row = self.history_table.currentRow()
+    if row < 0 or row >= len(self.history_audios):
+      self.history_status.setText('Selecione um áudio na tabela primeiro.')
+      return None
+    return self.history_audios[row]
+
   def play_local(self):
     self.server_player.stop()
     self.player.play()
@@ -352,12 +377,10 @@ class MainWindow(QMainWindow):
     self.play_from_server('processed')
 
   def play_from_server(self, kind):
-    row = self.history_table.currentRow()
-    if row < 0:
-      self.history_status.setText('Selecione um áudio na tabela primeiro.')
+    audio = self.selected_audio()
+    if audio is None:
       return
 
-    audio = self.history_audios[row]
     url = api.get_file_url(self.server_url(), audio['id'], kind)
 
     self.player.stop()
@@ -372,3 +395,60 @@ class MainWindow(QMainWindow):
 
   def show_player_error(self, error, error_string):
     self.history_status.setText('Não foi possível tocar o áudio: ' + error_string)
+
+  def download_original(self):
+    self.download_file('original')
+
+  def download_processed(self):
+    self.download_file('processed')
+
+  def download_file(self, kind):
+    audio = self.selected_audio()
+    if audio is None:
+      return
+
+    # Sugere um nome como musica_original.mp3 ou musica_processado.ogg
+    name = Path(audio['original_name']).stem
+    if kind == 'original':
+      ext = audio['original_ext']
+      suggested_name = f'{name}_original.{ext}'
+    else:
+      ext = audio['path_processed'].rsplit('.', 1)[-1]
+      suggested_name = f'{name}_processado.{ext}'
+
+    path, selected_filter = QFileDialog.getSaveFileName(
+      self, 'Salvar áudio', suggested_name, f'Áudio (*.{ext})'
+    )
+    if not path:
+      return
+
+    self.start_waiting(self.history_status, 'Baixando o arquivo...')
+    try:
+      api.download_file(self.server_url(), audio['id'], kind, path)
+    except RuntimeError as error:
+      self.stop_waiting()
+      self.history_status.setText('O download falhou.')
+      QMessageBox.warning(self, 'Erro no download', str(error))
+      return
+
+    self.stop_waiting()
+    self.history_status.setText(f'Arquivo salvo em {path}')
+
+  def show_waveform(self):
+    audio = self.selected_audio()
+    if audio is None:
+      return
+
+    self.start_waiting(self.history_status, 'Carregando a forma de onda...')
+    try:
+      image_bytes = api.get_file_content(self.server_url(), audio['id'], 'waveform')
+    except RuntimeError as error:
+      self.stop_waiting()
+      self.history_status.setText('Não foi possível carregar a forma de onda.')
+      QMessageBox.warning(self, 'Erro na forma de onda', str(error))
+      return
+
+    self.stop_waiting()
+    self.history_status.setText('')
+    dialog = WaveformDialog(self, f'Forma de onda de {audio["original_name"]}', image_bytes)
+    dialog.exec()

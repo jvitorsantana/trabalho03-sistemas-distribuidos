@@ -21,8 +21,10 @@ def get_audio_file(audio_id: uuid.UUID, kind: str, db: Session = Depends(get_db)
         path = audio.path_original
     elif kind == "processed":
         path = audio.path_processed
+    elif kind == "waveform":
+        path = os.path.join(os.path.dirname(audio.path_original), "waveform.png")
     else:
-        raise HTTPException(status_code=404, detail="Use original ou processed no endereço.")
+        raise HTTPException(status_code=404, detail="Use original, processed ou waveform no endereço.")
 
     if not path or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Arquivo não encontrado no servidor.")
