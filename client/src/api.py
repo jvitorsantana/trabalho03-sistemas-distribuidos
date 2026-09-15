@@ -2,7 +2,10 @@ from pathlib import Path
 
 import requests
 
-TIMEOUT = 120
+TIMEOUT = (5, 120)
+
+CONNECTION_ERROR = 'Não foi possível falar com o servidor. Confira o endereço e se ele está rodando.'
+
 
 def get_error_message(response):
   try:
@@ -29,8 +32,24 @@ def upload_audio(server_url, file_path, processing_type, speed_factor, target_bi
       files = {'file': (Path(file_path).name, file)}
       response = requests.post(server_url + '/api/upload', data=data, files=files, timeout=TIMEOUT)
   except requests.RequestException:
-    raise RuntimeError('Não foi possível falar com o servidor. Confira o endereço e se ele está rodando.')
+    raise RuntimeError(CONNECTION_ERROR)
+  except OSError:
+    raise RuntimeError('Não foi possível ler o arquivo escolhido.')
 
   if response.status_code != 200:
     raise RuntimeError(get_error_message(response))
   return response.json()
+
+
+def get_history(server_url):
+  try:
+    response = requests.get(server_url + '/api/history', timeout=TIMEOUT)
+  except requests.RequestException:
+    raise RuntimeError(CONNECTION_ERROR)
+
+  if response.status_code != 200:
+    raise RuntimeError(get_error_message(response))
+  return response.json()
+
+def get_file_url(server_url, audio_id, kind):
+  return f'{server_url}/api/audio/{audio_id}/{kind}'

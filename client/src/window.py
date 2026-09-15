@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
   QApplication,
@@ -11,11 +11,14 @@ from PySide6.QtWidgets import (
   QFormLayout,
   QGroupBox,
   QHBoxLayout,
+  QHeaderView,
   QLabel,
   QLineEdit,
   QMainWindow,
   QMessageBox,
   QPushButton,
+  QTableWidget,
+  QTableWidgetItem,
   QVBoxLayout,
   QWidget,
 )
@@ -30,6 +33,8 @@ PROCESSINGS = {
   'bitrate': 'Redução da taxa de bits',
   'convert': 'Conversão de formato',
 }
+
+HISTORY_COLUMNS = ['Data', 'Arquivo', 'Processamento', 'Formato', 'Duração', 'Tamanho']
 
 
 def format_size(size_bytes):
@@ -55,28 +60,39 @@ class MainWindow(QMainWindow):
   def __init__(self):
     super().__init__()
     self.setWindowTitle('Cliente de Processamento de Áudio')
-    self.resize(900, 650)
+    self.resize(950, 850)
 
     self.file_path = None
     self.file_info = ''
+    self.history_audios = []
 
-    # Player do áudio original
+    # Player do arquivo escolhido no computador
     self.player = QMediaPlayer()
     self.audio_output = QAudioOutput()
     self.player.setAudioOutput(self.audio_output)
     self.player.durationChanged.connect(self.show_duration)
+
+    # Player dos áudios que estão no servidor
+    self.server_player = QMediaPlayer()
+    self.server_audio_output = QAudioOutput()
+    self.server_player.setAudioOutput(self.server_audio_output)
+    self.server_player.errorOccurred.connect(self.show_player_error)
 
     central = QWidget()
     layout = QVBoxLayout(central)
     layout.addWidget(self.build_server_box())
     layout.addWidget(self.build_file_box())
     layout.addWidget(self.build_processing_box())
-    layout.addWidget(self.build_result_box())
-    layout.addStretch()
+    layout.addWidget(self.build_details_box())
+    layout.addWidget(self.build_history_box(), 1)
     self.setCentralWidget(central)
+
+    QTimer.singleShot(0, self.refresh_history)
 
   def build_server_box(self):
     self.server_input = QLineEdit(config.SERVER_URL)
+    self.server_input.setPlaceholderText('Exemplo: 192.168.0.10:8000')
+    self.server_input.returnPressed.connect(self.refresh_history)
 
     box = QGroupBox('Servidor')
     box_layout = QHBoxLayout(box)
@@ -91,7 +107,7 @@ class MainWindow(QMainWindow):
     self.info_label = QLabel('')
 
     self.play_button = QPushButton('Tocar')
-    self.play_button.clicked.connect(self.player.play)
+    self.play_button.clicked.connect(self.play_local)
     self.stop_button = QPushButton('Parar')
     self.stop_button.clicked.connect(self.player.stop)
     self.play_button.setEnabled(False)
@@ -147,17 +163,55 @@ class MainWindow(QMainWindow):
     self.update_options()
     return box
 
-  def build_result_box(self):
-    self.result_label = QLabel('Nenhum áudio enviado ainda.')
+  def build_details_box(self):
+    self.result_label = QLabel('Envie um áudio ou selecione um item do histórico.')
     self.result_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
-    box = QGroupBox('Resultado do servidor')
+    box = QGroupBox('Detalhes do áudio')
     box_layout = QVBoxLayout(box)
     box_layout.addWidget(self.result_label)
     return box
 
+  def build_history_box(self):
+    self.refresh_button = QPushButton('Atualizar histórico')
+    self.refresh_button.clicked.connect(self.refresh_history)
+    self.play_original_button = QPushButton('Tocar original')
+    self.play_original_button.clicked.connect(self.play_original_from_server)
+    self.play_processed_button = QPushButton('Tocar processado')
+    self.play_processed_button.clicked.connect(self.play_processed_from_server)
+    self.stop_server_button = QPushButton('Parar')
+    self.stop_server_button.clicked.connect(self.server_player.stop)
+    self.history_status = QLabel('')
+
+    self.history_table = QTableWidget(0, len(HISTORY_COLUMNS))
+    self.history_table.setHorizontalHeaderLabels(HISTORY_COLUMNS)
+    self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
+    self.history_table.setSelectionBehavior(QTableWidget.SelectRows)
+    self.history_table.verticalHeader().setVisible(False)
+    self.history_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+    self.history_table.setToolTip('Clique duas vezes para tocar o áudio processado')
+    self.history_table.currentCellChanged.connect(self.show_selected_details)
+    self.history_table.cellDoubleClicked.connect(self.play_double_clicked)
+
+    buttons_row = QHBoxLayout()
+    buttons_row.addWidget(self.refresh_button)
+    buttons_row.addWidget(self.play_original_button)
+    buttons_row.addWidget(self.play_processed_button)
+    buttons_row.addWidget(self.stop_server_button)
+    buttons_row.addStretch()
+
+    box = QGroupBox('Histórico')
+    box_layout = QVBoxLayout(box)
+    box_layout.addLayout(buttons_row)
+    box_layout.addWidget(self.history_status)
+    box_layout.addWidget(self.history_table)
+    return box
+
   def server_url(self):
-    return self.server_input.text().strip().rstrip('/')
+    url = self.server_input.text().strip().rstrip('/')
+    if not url.startswith('http://') and not url.startswith('https://'):
+      url = 'http://' + url
+    return url
 
   def choose_file(self):
     path, selected_filter = QFileDialog.getOpenFileName(
@@ -222,9 +276,11 @@ class MainWindow(QMainWindow):
 
     self.stop_waiting()
     self.send_button.setEnabled(True)
-    self.show_result(audio)
+    self.refresh_history()
+    self.history_table.selectRow(0)
+    self.show_details(audio, 'Áudio enviado e processado com sucesso!')
 
-  def show_result(self, audio):
+  def show_details(self, audio, title):
     processing = PROCESSINGS.get(audio['processing_type'], audio['processing_type'])
     audio_format = audio['original_ext'].upper()
     size = format_size(audio['size_bytes'] or 0)
@@ -233,8 +289,8 @@ class MainWindow(QMainWindow):
     date = format_date(audio['created_at'])
 
     lines = [
-      'Áudio enviado e processado com sucesso!',
-      f'ID: {audio["id"]}',
+      title,
+      f'Arquivo: {audio["original_name"]}   |   ID: {audio["id"]}',
       f'Processamento: {processing}',
       'Informações do arquivo original:',
       f'Formato: {audio_format}   |   Tamanho: {size}   |   Duração: {duration}',
@@ -242,3 +298,77 @@ class MainWindow(QMainWindow):
       f'Recebido em: {date}',
     ]
     self.result_label.setText('\n'.join(lines))
+
+  def refresh_history(self):
+    self.history_status.setText('Carregando histórico...')
+    QApplication.setOverrideCursor(Qt.WaitCursor)
+    QApplication.processEvents()
+
+    try:
+      audios = api.get_history(self.server_url())
+    except RuntimeError as error:
+      self.stop_waiting()
+      self.history_status.setText(str(error))
+      return
+
+    self.stop_waiting()
+    self.show_history(audios)
+
+  def show_history(self, audios):
+    self.history_audios = audios
+    self.history_table.setRowCount(len(audios))
+
+    for row, audio in enumerate(audios):
+      processing = PROCESSINGS.get(audio['processing_type'], audio['processing_type'] or '-')
+      values = [
+        format_date(audio['created_at']),
+        audio['original_name'],
+        processing,
+        audio['original_ext'].upper(),
+        format_duration(audio['duration_sec'] or 0),
+        format_size(audio['size_bytes'] or 0),
+      ]
+      for column, value in enumerate(values):
+        self.history_table.setItem(row, column, QTableWidgetItem(value))
+
+    self.history_status.setText(f'{len(audios)} áudio(s) no servidor.')
+
+  def show_selected_details(self, row, column, previous_row, previous_column):
+    if row < 0 or row >= len(self.history_audios):
+      return
+    self.show_details(self.history_audios[row], 'Áudio selecionado no histórico:')
+
+  def play_local(self):
+    self.server_player.stop()
+    self.player.play()
+
+  def play_original_from_server(self):
+    self.play_from_server('original')
+
+  def play_processed_from_server(self):
+    self.play_from_server('processed')
+
+  def play_double_clicked(self, row, column):
+    self.play_from_server('processed')
+
+  def play_from_server(self, kind):
+    row = self.history_table.currentRow()
+    if row < 0:
+      self.history_status.setText('Selecione um áudio na tabela primeiro.')
+      return
+
+    audio = self.history_audios[row]
+    url = api.get_file_url(self.server_url(), audio['id'], kind)
+
+    self.player.stop()
+    self.server_player.setSource(QUrl(url))
+    self.server_player.play()
+
+    if kind == 'original':
+      version = 'original'
+    else:
+      version = 'processado'
+    self.history_status.setText(f'Tocando o áudio {version} de {audio["original_name"]}.')
+
+  def show_player_error(self, error, error_string):
+    self.history_status.setText('Não foi possível tocar o áudio: ' + error_string)
