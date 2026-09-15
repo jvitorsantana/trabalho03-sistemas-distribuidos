@@ -15,6 +15,7 @@ async def upload_audio(
     processing_type: str = Form(...),
     speed_factor: float | None = Form(None),
     target_bitrate: str | None = Form(None),
+    target_format: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
     original_ext = file.filename.split(".")[-1].lower()
@@ -30,10 +31,12 @@ async def upload_audio(
         audio_info = ffmpeg_service.get_audio_info(path_original)
 
         # 3. Processa com FFmpeg
-        path_processed = ffmpeg_service.get_processed_path(folder_path, original_ext)
+        output_ext = ffmpeg_service.get_output_ext(processing_type, original_ext, target_format)
+        path_processed = ffmpeg_service.get_processed_path(folder_path, output_ext)
         ffmpeg_service.process_audio(
             path_original, path_processed, processing_type,
             speed_factor=speed_factor, target_bitrate=target_bitrate,
+            sample_rate=audio_info["sample_rate"],
         )
     except FileNotFoundError as e:
         raise HTTPException(
@@ -51,6 +54,8 @@ async def upload_audio(
         "processing_type": processing_type,
         "speed_factor": speed_factor,
         "target_bitrate": target_bitrate,
+        "target_format": target_format,
+        "output_ext": output_ext,
     })
 
     # 6. Registra no banco
