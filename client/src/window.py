@@ -66,6 +66,10 @@ class MainWindow(QMainWindow):
     self.file_path = None
     self.file_info = ''
     self.history_audios = []
+    self.current_audio = None
+    self.details_title = ''
+    self.processed_info = {}
+
 
     # Player do arquivo escolhido no computador
     self.player = QMediaPlayer()
@@ -165,13 +169,25 @@ class MainWindow(QMainWindow):
     return box
 
   def build_details_box(self):
+    self.details_combo = QComboBox()
+    self.details_combo.addItem('Arquivo original', 'original')
+    self.details_combo.addItem('Arquivo processado', 'processed')
+    self.details_combo.currentIndexChanged.connect(self.update_details)
+
     self.result_label = QLabel('Envie um áudio ou selecione um item do histórico.')
     self.result_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
+    combo_row = QHBoxLayout()
+    combo_row.addWidget(QLabel('Mostrar:'))
+    combo_row.addWidget(self.details_combo)
+    combo_row.addStretch()
+
     box = QGroupBox('Detalhes do áudio')
     box_layout = QVBoxLayout(box)
+    box_layout.addLayout(combo_row)
     box_layout.addWidget(self.result_label)
     return box
+
 
   def build_history_box(self):
     self.refresh_button = QPushButton('Atualizar histórico')
@@ -300,23 +316,68 @@ class MainWindow(QMainWindow):
     self.show_details(audio, 'Áudio enviado e processado com sucesso!')
 
   def show_details(self, audio, title):
+    # Guarda o áudio mostrado e desenha conforme a escolha do menu
+    self.current_audio = audio
+    self.details_title = title
+    self.update_details()
+
+  def update_details(self):
+    if self.current_audio is None:
+      return
+
+    audio = self.current_audio
+    kind = self.details_combo.currentData()
+
+    if kind == 'original':
+      info = {
+        'ext': audio['original_ext'],
+        'size_bytes': audio['size_bytes'],
+        'duration_sec': audio['duration_sec'],
+        'sample_rate': audio['sample_rate'],
+        'channels': audio['channels'],
+        'bitrate': audio['bitrate'],
+      }
+      version = 'Informações do arquivo original:'
+    else:
+      info = self.load_processed_info(audio['id'])
+      if info is None:
+        return
+      version = 'Informações do arquivo processado:'
+
     processing = PROCESSINGS.get(audio['processing_type'], audio['processing_type'])
-    audio_format = audio['original_ext'].upper()
-    size = format_size(audio['size_bytes'] or 0)
-    duration = format_duration(audio['duration_sec'] or 0)
-    bitrate = (audio['bitrate'] or 0) // 1000
+    audio_format = (info['ext'] or '').upper()
+    size = format_size(info['size_bytes'] or 0)
+    duration = format_duration(info['duration_sec'] or 0)
+    bitrate = (info['bitrate'] or 0) // 1000
     date = format_date(audio['created_at'])
 
     lines = [
-      title,
+      self.details_title,
       f'Arquivo: {audio["original_name"]}   |   ID: {audio["id"]}',
       f'Processamento: {processing}',
-      'Informações do arquivo original:',
+      version,
       f'Formato: {audio_format}   |   Tamanho: {size}   |   Duração: {duration}',
-      f'Taxa de amostragem: {audio["sample_rate"]} Hz   |   Canais: {audio["channels"]}   |   Bitrate: {bitrate} kbps',
+      f'Taxa de amostragem: {info["sample_rate"]} Hz   |   Canais: {info["channels"]}   |   Bitrate: {bitrate} kbps',
       f'Recebido em: {date}',
     ]
     self.result_label.setText('\n'.join(lines))
+
+  def load_processed_info(self, audio_id):
+    # Guarda o que já foi buscado, para não pedir duas vezes ao servidor
+    if audio_id in self.processed_info:
+      return self.processed_info[audio_id]
+
+    self.start_waiting(self.result_label, 'Buscando as informações do arquivo processado...')
+    try:
+      info = api.get_audio_info(self.server_url(), audio_id, 'processed')
+    except RuntimeError as error:
+      self.stop_waiting()
+      self.result_label.setText('Não foi possível buscar as informações do processado.\n' + str(error))
+      return None
+
+    self.stop_waiting()
+    self.processed_info[audio_id] = info
+    return info
 
   def refresh_history(self):
     self.start_waiting(self.history_status, 'Carregando histórico...')

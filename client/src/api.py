@@ -74,3 +74,12 @@ def download_file(server_url, audio_id, kind, dest_path):
   except OSError:
     raise RuntimeError('Não foi possível salvar o arquivo nesse local.')
 
+def get_audio_info(server_url, audio_id, kind):
+  try:
+    response = requests.get(f'{server_url}/api/audio/{audio_id}/info/{kind}', timeout=TIMEOUT)
+  except requests.RequestException:
+    raise RuntimeError(CONNECTION_ERROR)
+
+  if response.status_code != 200:
+    raise RuntimeError(get_error_message(response))
+  return response.json()
