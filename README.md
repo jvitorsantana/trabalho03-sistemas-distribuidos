@@ -216,37 +216,19 @@ Substitua os links abaixo pelas URLs das imagens.
 
 **Tela principal do cliente (servidor, arquivo, processamento, detalhes e histórico)**
 
-![Tela principal do cliente](COLE_O_LINK_AQUI)
+![Tela principal do cliente](assets/cliente_1.png)
 
 **Envio e detalhes do áudio processado**
 
-![Detalhes do áudio processado](COLE_O_LINK_AQUI)
+![Detalhes do áudio processado](assets/cliente_2.png)
 
 **Histórico com reprodução e download**
 
-![Histórico de processamentos](COLE_O_LINK_AQUI)
+![Histórico de processamentos](assets/cliente_3.png)
 
 **Forma de onda**
 
-![Janela da forma de onda](COLE_O_LINK_AQUI)
-
-## Prints da organização dos arquivos
-
-**Estrutura do repositório (cliente, backend e Docker Compose)**
-
-![Organização do repositório](COLE_O_LINK_AQUI)
-
-**Pastas do backend (`app`, routers, services)**
-
-![Organização do backend](COLE_O_LINK_AQUI)
-
-**Pastas do cliente (`src`)**
-
-![Organização do cliente](COLE_O_LINK_AQUI)
-
-**Storage no disco (`storage/YYYY-MM-DD/<uuid>/`)**
-
-![Organização do storage](COLE_O_LINK_AQUI)
+![Janela da forma de onda](assets/cliente_4.png)
 
 Referência da árvore do projeto:
 
